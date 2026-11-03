@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Structure loot editor for Bedrock .mcstructure files</title>
+<meta name="description" content="Set loot tables on the chests inside Bedrock .mcstructure files. Reads the new compressed format. Runs entirely in your browser.">
+<style>
+:root {
+  --bg: #ECEEF3;
+  --surface: #FAFAFC;
+  --ink: #1E2430;
+  --muted: #566074;
+  --line: #C9CEDA;
+  --accent: #5B49A6;
+  --on-accent: #FFFFFF;
+  --chest: #A9763B;
+  --ok: #1F6B4B;
+  --warn: #9A4310;
+  --danger: #A12D2D;
+  --warn-bg: #F7E8DA;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171E;
+    --surface: #1B1F28;
+    --ink: #E7E9EF;
+    --muted: #9AA3B5;
+    --line: #333A49;
+    --accent: #B0A3F0;
+    --on-accent: #14171E;
+    --chest: #D39C5E;
+    --ok: #62C99D;
+    --warn: #E8A767;
+    --danger: #F29090;
+    --warn-bg: #2E2418;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171E; --surface: #1B1F28; --ink: #E7E9EF; --muted: #9AA3B5; --line: #333A49;
+  --accent: #B0A3F0; --on-accent: #14171E; --chest: #D39C5E; --ok: #62C99D; --warn: #E8A767;
+  --danger: #F29090; --warn-bg: #2E2418; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--bg);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.page { max-width: 880px; margin: 0 auto; padding: 40px 20px 56px; }
+
+h1 { margin: 0 0 8px; font-size: 1.75rem; line-height: 1.15; font-weight: 650; letter-spacing: -0.01em; }
+.lede { margin: 0 0 28px; max-width: 62ch; color: var(--muted); }
+
+code, .path { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 0.9em; }
+
+/* The one memorable element: a drop zone drawn like an in-game structure bounding box. */
+.drop {
+  --c: var(--ink);
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 12px;
+  min-height: 168px; padding: 28px 32px; margin-bottom: 24px;
+  background:
+    linear-gradient(var(--c), var(--c)) top left / 28px 3px no-repeat,
+    linear-gradient(var(--c), var(--c)) top left / 3px 28px no-repeat,
+    linear-gradient(var(--c), var(--c)) top right / 28px 3px no-repeat,
+    linear-gradient(var(--c), var(--c)) top right / 3px 28px no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom left / 28px 3px no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom left / 3px 28px no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom right / 28px 3px no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom right / 3px 28px no-repeat,
+    var(--surface);
+  border: 1px solid var(--line);
+}
+.drop.is-over { --c: var(--accent); border-color: var(--accent); }
+.drop.is-compact { min-height: 0; flex-direction: row; align-items: center; padding: 14px 20px; justify-content: space-between; }
+.drop p { margin: 0; }
+.drop .big { font-size: 1.2rem; font-weight: 600; }
+.drop .hint { color: var(--muted); }
+
+button, .btn {
+  font: inherit; font-weight: 600; cursor: pointer;
+  padding: 8px 16px; border: 1px solid var(--ink); border-radius: 4px;
+  background: transparent; color: var(--ink);
+}
+button:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--ink)); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 24px; margin: 0; }
+.facts div { min-width: 0; }
+.facts dt { color: var(--muted); font-size: 0.875rem; }
+.facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+
+.notice { margin: 0 0 20px; padding: 12px 16px; border-left: 4px solid var(--warn); background: var(--warn-bg); color: var(--ink); border-radius: 0 4px 4px 0; }
+.notice.error { border-left-color: var(--danger); }
+.notice strong { display: block; }
+.notice pre { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8rem; }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+table { border-collapse: collapse; width: 100%; min-width: 620px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 0.875rem; font-weight: 600; color: var(--muted); background: color-mix(in srgb, var(--ink) 4%, var(--surface)); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; }
+th.check, td.check { width: 40px; padding-right: 0; }
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+.swatch { display: inline-block; width: 10px; height: 10px; margin-right: 8px; background: var(--chest); border: 1px solid color-mix(in srgb, var(--chest) 60%, #000); vertical-align: baseline; }
+.swatch.none { background: transparent; border-color: var(--line); }
+.unsaved { margin-left: 8px; color: var(--warn); font-size: 0.85rem; font-weight: 600; }
+.none-text { color: var(--muted); }
+button.linklike { all: unset; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; overflow-wrap: anywhere; }
+button.linklike:hover { text-decoration-color: var(--accent); }
+button.linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.field { margin-top: 20px; }
+.field label.title { display: block; font-weight: 600; margin-bottom: 6px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+input[type="text"] { flex: 1 1 280px; min-width: 0; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.95rem; padding: 8px 12px; color: var(--ink); background: var(--bg); border: 1px solid var(--muted); border-radius: 4px; }
+.help { margin: 6px 0 0; color: var(--muted); font-size: 0.9rem; }
+.help.bad { color: var(--danger); }
+
+.options { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 20px; }
+.options label { display: inline-flex; align-items: center; gap: 8px; }
+.savebar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+.status { margin: 12px 0 0; min-height: 1.5em; }
+.status.ok { color: var(--ok); }
+.status.bad { color: var(--danger); }
+
+footer { color: var(--muted); font-size: 0.9rem; max-width: 70ch; }
+footer p { margin: 0 0 6px; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (max-width: 560px) {
+  .page { padding-top: 24px; }
+  .drop { padding: 20px; }
+  .drop.is-compact { flex-direction: column; align-items: flex-start; gap: 10px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Structure loot editor</h1>
+    <p class="lede">Set loot tables on the chests inside a Bedrock <code>.mcstructure</code> file. It reads the compressed format from 26.60 as well as older files. Your file is processed in this browser and is never uploaded.</p>
+  </header>
+
+  <noscript><p class="notice error"><strong>JavaScript is off.</strong>This editor needs JavaScript to read and edit structure files.</p></noscript>
+
+  <main>
+    <section id="drop" class="drop" aria-label="Open a structure file">
+      <p class="big">Drop a .mcstructure file here</p>
+      <p class="hint">or choose one from your computer.</p>
+      <button type="button" id="choose" class="primary">Choose file</button>
+      <input type="file" id="fileinput" accept=".mcstructure" hidden>
+    </section>
+
+    <div id="alert" role="alert"></div>
+
+    <section id="editor" hidden>
+      <div class="panel">
+        <dl class="facts" id="facts"></dl>
+      </div>
+
+      <div id="rtwarn" class="notice" hidden>
+        <strong>This file doesn't re-save byte for byte.</strong>
+        Saving it with no edits would change it slightly. The edits are probably still fine, but test the result in a world before you ship it.
+      </div>
+
+      <div class="panel">
+        <div class="tablewrap">
+          <table>
+            <caption class="sr-only">Block entities in the structure</caption>
+            <thead>
+              <tr>
+                <th class="check"><input type="checkbox" id="checkall" aria-label="Select all chests"></th>
+                <th>Index</th>
+                <th>Block</th>
+                <th>Entity</th>
+                <th>Items</th>
+                <th>Loot table</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+
+        <div class="field">
+          <label class="title" for="table">Loot table</label>
+          <div class="row">
+            <input type="text" id="table" value="loot_tables/chests/" spellcheck="false" autocomplete="off" aria-describedby="tablehelp">
+            <button type="button" id="apply">Apply to checked rows</button>
+          </div>
+          <p class="help" id="tablehelp">The path from your behavior pack, for example <code>loot_tables/chests/lodestone_shrine.json</code>. Click a path in the table to reuse it.</p>
+        </div>
+
+        <div class="options">
+          <label><input type="checkbox" id="clear" checked> Empty chest contents</label>
+          <label><input type="checkbox" id="uncompressed"> Save without compression</label>
+        </div>
+
+        <div class="savebar">
+          <button type="button" id="download" class="primary">Download edited file</button>
+          <button type="button" id="saveover" hidden>Save over original</button>
+          <button type="button" id="another">Open another file</button>
+        </div>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Unofficial tool. Not affiliated with Mojang or Microsoft.</p>
+    <p>Made for add-on creators who add loot to their own structures. Always test the saved file in a world.</p>
+  </footer>
+</div>
+
+<!-- ===================================================================== -->
+<!-- Core: NBT reading/writing and structure editing. No DOM in here.       -->
+<!-- ===================================================================== -->
+<script id="core">
+"use strict";
+
+const TYPE_NAMES = ["End", "Byte", "Short", "Int", "Long", "Float", "Double", "ByteArray", "String", "List", "Compound", "IntArray", "LongArray"];
+const FIXED = { 1: 1, 2: 2, 3: 4, 4: 8, 5: 4, 6: 8 };
+const _dec = new TextDecoder();
+const _enc = new TextEncoder();
+const dec = (b) => _dec.decode(b);
+const enc = (s) => _enc.encode(s);
+
+/* ---- tag helpers ------------------------------------------------------- */
+const str = (tag) => dec(tag.raw);
+const mkStr = (s) => ({ t: 8, raw: enc(s) });
+function mkInt(n) {
+  const raw = new Uint8Array(4);
+  new DataView(raw.buffer).setInt32(0, n, true);
+  return { t: 3, raw };
+}
+const intVal = (tag) => new DataView(tag.raw.buffer, tag.raw.byteOffset, 4).getInt32(0, true);
+function intAt(tag, i) {
+  // Works for an IntArray tag and for a List of Int tags.
+  if (!tag || !tag.raw || tag.count === undefined) return undefined;
+  if (!(tag.t === 11 || (tag.t === 9 && tag.it === 3))) return undefined;
+  if (i < 0 || i >= tag.count) return undefined;
+  return new DataView(tag.raw.buffer, tag.raw.byteOffset + i * 4, 4).getInt32(0, true);
+}
+
+/* ---- reader ------------------------------------------------------------ */
+class Reader {
+  constructor(u8) {
+    this.u8 = u8;
+    this.dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    this.p = 0;
+  }
+  need(n) {
+    if (n < 0 || this.p + n > this.u8.length) throw new Error("Unexpected end of data at byte " + this.p);
+  }
+  byte() { this.need(1); return this.u8[this.p++]; }
+  u16() { this.need(2); const v = this.dv.getUint16(this.p, true); this.p += 2; return v; }
+  i32() { this.need(4); const v = this.dv.getInt32(this.p, true); this.p += 4; return v; }
+  bytes(n) { this.need(n); const s = this.u8.subarray(this.p, this.p + n); this.p += n; return s; }
+}
+
+function readPayload(r, t, depth) {
+  if (depth > 512) throw new Error("NBT is nested too deeply");
+  if (FIXED[t]) return { t, raw: r.bytes(FIXED[t]) };
+  switch (t) {
+    case 7: { const n = r.i32(); return { t, count: n, raw: r.bytes(n) }; }
+    case 11: { const n = r.i32(); return { t, count: n, raw: r.bytes(n * 4) }; }
+    case 12: { const n = r.i32(); return { t, count: n, raw: r.bytes(n * 8) }; }
+    case 8: { const n = r.u16(); return { t, raw: r.bytes(n) }; }
+    case 9: {
+      const it = r.byte();
+      const n = r.i32();
+      if (n < 0) throw new Error("Negative list length");
+      if (FIXED[it]) return { t, it, count: n, raw: r.bytes(n * FIXED[it]) };
+      const items = [];
+      for (let i = 0; i < n; i++) items.push(readPayload(r, it, depth + 1));
+      return { t, it, count: n, items };
+    }
+    case 10: {
+      const v = new Map();
+      for (;;) {
+        const tt = r.byte();
+        if (tt === 0) break;
+        const key = dec(r.bytes(r.u16()));
+        v.set(key, readPayload(r, tt, depth + 1));
+      }
+      return { t, v };
+    }
+    default: throw new Error("Unknown tag type " + t);
+  }
+}
+
+function readRoot(u8) {
+  const r = new Reader(u8);
+  const t = r.byte();
+  if (t !== 10) throw new Error("File does not start with an NBT compound (first byte is " + t + ")");
+  const name = dec(r.bytes(r.u16()));
+  const tag = readPayload(r, 10, 0);
+  return { name, tag, end: r.p };
+}
+
+/* ---- writer ------------------------------------------------------------ */
+class Writer {
+  constructor(cap) {
+    this.buf = new Uint8Array(cap || 1 << 16);
+    this.dv = new DataView(this.buf.buffer);
+    this.p = 0;
+  }
+  ensure(n) {
+    if (this.p + n <= this.buf.length) return;
+    let c = this.buf.length * 2;
+    while (c < this.p + n) c *= 2;
+    const nb = new Uint8Array(c);
+    nb.set(this.buf.subarray(0, this.p));
+    this.buf = nb;
+    this.dv = new DataView(nb.buffer);
+  }
+  byte(v) { this.ensure(1); this.buf[this.p++] = v; }
+  u16(v) { this.ensure(2); this.dv.setUint16(this.p, v, true); this.p += 2; }
+  i32(v) { this.ensure(4); this.dv.setInt32(this.p, v, true); this.p += 4; }
+  bytes(b) { this.ensure(b.length); this.buf.set(b, this.p); this.p += b.length; }
+  result() { return this.buf.slice(0, this.p); }
+}
+
+function writePayload(w, tag) {
+  if (FIXED[tag.t]) return w.bytes(tag.raw);
+  switch (tag.t) {
+    case 7: case 11: case 12: w.i32(tag.count); return w.bytes(tag.raw);
+    case 8: w.u16(tag.raw.length); return w.bytes(tag.raw);
+    case 9:
+      w.byte(tag.it);
+      w.i32(tag.count);
+      if (tag.raw) return w.bytes(tag.raw);
+      for (const item of tag.items) writePayload(w, item);
+      return;
+    case 10:
+      for (const [k, v] of tag.v) {
+        w.byte(v.t);
+        const kb = enc(k);
+        w.u16(kb.length);
+        w.bytes(kb);
+        writePayload(w, v);
+      }
+      return w.byte(0);
+    default: throw new Error("Cannot write tag type " + tag.t);
+  }
+}
+
+function writeRoot(w, name, tag) {
+  w.byte(10);
+  const nb = enc(name);
+  w.u16(nb.length);
+  w.bytes(nb);
+  writePayload(w, tag);
+}
+
+const sameBytes = (a, b) => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
+/* ---- zlib via the browser's built-in streams ------------------------------- */
+async function pipeBytes(u8, Ctor, format) {
+  const stream = new Blob([u8]).stream().pipeThrough(new Ctor(format));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+function inflate(u8) {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("This browser can't decompress zlib data. Update to a current Chrome, Edge, Firefox or Safari.");
+  }
+  return pipeBytes(u8, DecompressionStream, "deflate"); // "deflate" is the zlib format
+}
+function deflate(u8) {
+  if (typeof CompressionStream === "undefined") {
+    throw new Error("This browser can't compress data. Tick 'Save without compression' or update your browser.");
+  }
+  return pipeBytes(u8, CompressionStream, "deflate");
+}
+
+/* ---- structure files ----------------------------------------------------------- */
+function describeRoot(root) {
+  return [...root.v].map(([k, v]) => {
+    let extra = "";
+    if (v.t === 3) extra = " = " + intVal(v);
+    else if (v.t === 7) extra = " (" + v.count + " bytes)";
+    return k + ": " + TYPE_NAMES[v.t] + extra;
+  }).join("\n");
+}
+
+function parseInner(raw) {
+  const problems = [];
+  try {
+    const r = readRoot(raw);
+    if (r.end === raw.length) return { structure: r.tag, kind: "named", name: r.name };
+    problems.push("named root left trailing bytes");
+  } catch (e) { problems.push("named root: " + e.message); }
+  try {
+    const rd = new Reader(raw);
+    const tag = readPayload(rd, 10, 0);
+    if (rd.p === raw.length) return { structure: tag, kind: "bare", name: "" };
+    problems.push("bare compound left trailing bytes");
+  } catch (e) { problems.push("bare compound: " + e.message); }
+  throw new Error("Could not read the decompressed structure data (" + problems.join("; ") + ")");
+}
+
+async function parseStructureFile(u8) {
+  const root = readRoot(u8);
+  const info = { rootSummary: describeRoot(root.tag) };
+  try {
+    if (root.end !== u8.length) throw new Error("The file has " + (u8.length - root.end) + " unexpected bytes after the NBT data");
+    const rt = root.tag.v;
+    const ctag = rt.get("compression");
+    const compression = ctag ? intVal(ctag) : 0;
+    const node = rt.get("structure");
+    if (!node) throw new Error("There is no 'structure' tag at the root of this file");
+
+    let structure, layout, innerRaw = null;
+    if (compression === 0) {
+      if (node.t !== 10) throw new Error("'structure' is a " + TYPE_NAMES[node.t] + " but compression is 0");
+      structure = node;
+      layout = { compression: 0 };
+    } else if (compression === 1) {
+      if (node.t !== 7) throw new Error("compression is 1 but 'structure' is a " + TYPE_NAMES[node.t]);
+      innerRaw = await inflate(node.raw);
+      const inner = parseInner(innerRaw);
+      structure = inner.structure;
+      layout = { compression: 1, kind: inner.kind, name: inner.name };
+    } else {
+      throw new Error("Unknown compression value " + compression + ". This editor knows 0 (none) and 1 (zlib)");
+    }
+
+    // Self-check: does re-saving the untouched file reproduce it exactly?
+    let identical = false;
+    try {
+      const w = new Writer(u8.length + 1024);
+      writeRoot(w, root.name, root.tag);
+      identical = sameBytes(w.result(), u8);
+      if (identical && innerRaw) {
+        const w2 = new Writer(innerRaw.length + 1024);
+        if (layout.kind === "named") writeRoot(w2, layout.name, structure);
+        else writePayload(w2, structure);
+        identical = sameBytes(w2.result(), innerRaw);
+      }
+    } catch (_) { identical = false; }
+
+    return { rootName: root.name, root: root.tag, structure, layout, identical, size: u8.length, rootSummary: info.rootSummary };
+  } catch (e) {
+    e.rootSummary = info.rootSummary;
+    throw e;
+  }
+}
+
+function* blockEntities(structure) {
+  const pals = structure.v.get("palette");
+  if (!pals || pals.t !== 10) return;
+  for (const [pname, pal] of pals.v) {
+    const bpd = pal.v && pal.v.get("block_position_data");
+    if (!bpd || bpd.t !== 10) continue;
+    for (const [idx, entry] of bpd.v) {
+      const bed = entry.v && entry.v.get("block_entity_data");
+      if (bed && bed.t === 10) yield { pname, idx, bed };
+    }
+  }
+}
+
+function describeEntities(structure) {
+  const rows = [];
+  const bi = structure.v.get("block_indices");
+  const layer0 = bi && bi.items ? bi.items[0] : undefined;
+  for (const { pname, idx, bed } of blockEntities(structure)) {
+    let block = "unknown";
+    const pal = structure.v.get("palette").v.get(pname);
+    const bp = pal.v.get("block_palette");
+    const pi = intAt(layer0, Number(idx));
+    if (pi !== undefined && bp && bp.items && bp.items[pi]) {
+      const nm = bp.items[pi].v.get("name");
+      if (nm) block = str(nm);
+    }
+    const id = bed.v.get("id");
+    const items = bed.v.get("Items");
+    const loot = bed.v.get("LootTable");
+    rows.push({
+      idx,
+      block,
+      id: id ? str(id) : "unknown",
+      items: items && items.count !== undefined ? items.count : 0,
+      loot: loot ? str(loot) : null,
+    });
+  }
+  return rows;
+}
+
+function applyLoot(structure, indices, table, clearItems) {
+  const wanted = new Set(indices);
+  let n = 0;
+  for (const { idx, bed } of blockEntities(structure)) {
+    if (!wanted.has(idx)) continue;
+    bed.v.set("LootTable", mkStr(table));
+    if (clearItems && bed.v.has("Items")) bed.v.set("Items", { t: 9, it: 10, count: 0, items: [] });
+    n++;
+  }
+  return n;
+}
+
+async function buildOutput(parsed, uncompressed) {
+  const rt = parsed.root.v;
+  if (parsed.layout.compression === 0 || uncompressed) {
+    rt.set("structure", parsed.structure);
+    if (rt.has("compression") || parsed.layout.compression === 1) rt.set("compression", mkInt(0));
+  } else {
+    const w = new Writer();
+    if (parsed.layout.kind === "named") writeRoot(w, parsed.layout.name, parsed.structure);
+    else writePayload(w, parsed.structure);
+    const blob = await deflate(w.result());
+    rt.set("structure", { t: 7, count: blob.length, raw: blob });
+    rt.set("compression", mkInt(1));
+  }
+  const out = new Writer();
+  writeRoot(out, parsed.rootName, parsed.root);
+  return out.result();
+}
+</script>
+
+<!-- ===================================================================== -->
+<!-- Interface                                                               -->
+<!-- ===================================================================== -->
+<script id="ui">
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    drop: $("drop"), choose: $("choose"), fileinput: $("fileinput"), alert: $("alert"),
+    editor: $("editor"), facts: $("facts"), rtwarn: $("rtwarn"), rows: $("rows"), checkall: $("checkall"),
+    table: $("table"), tablehelp: $("tablehelp"), apply: $("apply"), clear: $("clear"),
+    uncompressed: $("uncompressed"), download: $("download"), saveover: $("saveover"),
+    another: $("another"), status: $("status"),
+  };
+  const HELP_DEFAULT = el.tablehelp.innerHTML;
+
+  let cur = null;          // parsed structure
+  let fileName = "";
+  let fileHandle = null;   // only set where the browser lets us save in place
+  let dirty = new Set();   // block indices edited since the last save
+  let checked = new Set(); // rows ticked in the table
+
+  const hasPicker = typeof window.showOpenFilePicker === "function";
+
+  function setStatus(text, kind) {
+    el.status.textContent = text || "";
+    el.status.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function showError(title, message, details) {
+    el.alert.textContent = "";
+    const box = document.createElement("div");
+    box.className = "notice error";
+    const s = document.createElement("strong");
+    s.textContent = title;
+    box.appendChild(s);
+    box.appendChild(document.createTextNode(message));
+    if (details) {
+      const d = document.createElement("details");
+      const sm = document.createElement("summary");
+      sm.textContent = "Technical details";
+      const pre = document.createElement("pre");
+      pre.textContent = details;
+      d.append(sm, pre);
+      box.appendChild(d);
+    }
+    el.alert.appendChild(box);
+  }
+  const clearError = () => { el.alert.textContent = ""; };
+
+  /* ---- rendering ------------------------------------------------------------ */
+  function addFact(label, value) {
+    const wrap = document.createElement("div");
+    const dt = document.createElement("dt");
+    const dd = document.createElement("dd");
+    dt.textContent = label;
+    dd.textContent = value;
+    wrap.append(dt, dd);
+    el.facts.appendChild(wrap);
+  }
+
+  function render() {
+    const rows = describeEntities(cur.structure);
+    const chests = rows.filter((r) => r.id === "Chest");
+
+    el.facts.textContent = "";
+    addFact("File", fileName);
+    addFact("Size", (cur.size / 1024).toFixed(1) + " KB");
+    addFact("Compression", cur.layout.compression === 1 ? "zlib" : "none");
+    addFact("Chests", String(chests.length));
+
+    el.rtwarn.hidden = cur.identical;
+
+    el.rows.textContent = "";
+    if (!rows.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 6;
+      td.className = "none-text";
+      td.textContent = "No chests or other containers were found in this structure.";
+      tr.appendChild(td);
+      el.rows.appendChild(tr);
+    }
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+
+      const tdc = document.createElement("td");
+      tdc.className = "check";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = checked.has(r.idx);
+      cb.setAttribute("aria-label", "Select " + r.block + " at index " + r.idx);
+      cb.addEventListener("change", () => {
+        if (cb.checked) checked.add(r.idx); else checked.delete(r.idx);
+        syncCheckAll(chests);
+      });
+      tdc.appendChild(cb);
+
+      const tdi = document.createElement("td");
+      tdi.className = "num";
+      tdi.textContent = r.idx;
+
+      const tdb = document.createElement("td");
+      const sw = document.createElement("span");
+      sw.className = "swatch" + (r.id === "Chest" ? "" : " none");
+      sw.setAttribute("aria-hidden", "true");
+      tdb.append(sw, document.createTextNode(r.block));
+
+      const tde = document.createElement("td");
+      tde.textContent = r.id;
+
+      const tdn = document.createElement("td");
+      tdn.className = "num";
+      tdn.textContent = String(r.items);
+
+      const tdl = document.createElement("td");
+      if (r.loot) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "linklike";
+        b.textContent = r.loot;
+        b.title = "Use this path in the loot table box";
+        b.addEventListener("click", () => { el.table.value = r.loot; el.table.focus(); });
+        tdl.appendChild(b);
+      } else {
+        const none = document.createElement("span");
+        none.className = "none-text";
+        none.textContent = "none";
+        tdl.appendChild(none);
+      }
+      if (dirty.has(r.idx)) {
+        const u = document.createElement("span");
+        u.className = "unsaved";
+        u.textContent = "unsaved";
+        tdl.appendChild(u);
+      }
+
+      tr.append(tdc, tdi, tdb, tde, tdn, tdl);
+      el.rows.appendChild(tr);
+    }
+    syncCheckAll(chests);
+    el.saveover.hidden = !fileHandle;
+  }
+
+  function syncCheckAll(chests) {
+    const n = chests.length;
+    const on = chests.filter((c) => checked.has(c.idx)).length;
+    el.checkall.checked = n > 0 && on === n;
+    el.checkall.indeterminate = on > 0 && on < n;
+    el.checkall.disabled = n === 0;
+  }
+
+  /* ---- loading --------------------------------------------------------------- */
+  async function loadFile(file, handle) {
+    if (!confirmDiscard()) return;
+    clearError();
+    setStatus("");
+    let u8;
+    try {
+      u8 = new Uint8Array(await file.arrayBuffer());
+    } catch (e) {
+      return showError("Couldn't read that file.", String(e && e.message || e));
+    }
+    try {
+      cur = await parseStructureFile(u8);
+    } catch (e) {
+      cur = null;
+      dirty = new Set();
+      checked = new Set();
+      el.editor.hidden = true;
+      const head = Array.from(u8.subarray(0, 24)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+      let details = "File: " + file.name + " (" + u8.length + " bytes)\nFirst bytes: " + head;
+      if (e.rootSummary) details += "\n\nRoot tags:\n" + e.rootSummary;
+      return showError(
+        "This file can't be edited here.",
+        (e && e.message ? e.message : String(e)) + ". If this is a structure saved by the game, include the technical details below when you report it.",
+        details
+      );
+    }
+    fileName = file.name;
+    fileHandle = handle || null;
+    dirty = new Set();
+    checked = new Set(describeEntities(cur.structure).filter((r) => r.id === "Chest").map((r) => r.idx));
+    el.editor.hidden = false;
+    el.drop.classList.add("is-compact");
+    el.drop.querySelector(".big").textContent = "Drop another .mcstructure file here";
+    el.drop.querySelector(".hint").hidden = true;
+    render();
+    const n = checked.size;
+    setStatus(n ? "Opened " + fileName + ". " + n + (n === 1 ? " chest is" : " chests are") + " selected." : "Opened " + fileName + ".");
+  }
+
+  function confirmDiscard() {
+    return !dirty.size || window.confirm("You have unsaved changes. Open a different file anyway?");
+  }
+
+  async function pickFile() {
+    if (hasPicker) {
+      try {
+        const [h] = await window.showOpenFilePicker({
+          types: [{ description: "Bedrock structure", accept: { "application/octet-stream": [".mcstructure"] } }],
+        });
+        return loadFile(await h.getFile(), h);
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+        // fall through to the plain input if the picker fails for another reason
+      }
+    }
+    el.fileinput.click();
+  }
+
+  el.choose.addEventListener("click", pickFile);
+  el.another.addEventListener("click", pickFile);
+  el.fileinput.addEventListener("change", () => {
+    const f = el.fileinput.files[0];
+    if (f) loadFile(f, null);
+    el.fileinput.value = "";
+  });
+
+  ["dragenter", "dragover"].forEach((ev) => window.addEventListener(ev, (e) => {
+    e.preventDefault();
+    el.drop.classList.add("is-over");
+  }));
+  ["dragleave", "drop"].forEach((ev) => window.addEventListener(ev, (e) => {
+    if (ev === "dragleave" && e.relatedTarget) return;
+    el.drop.classList.remove("is-over");
+  }));
+  window.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    const item = e.dataTransfer.items && e.dataTransfer.items[0];
+    let file = null;
+    let handleP = null;
+    if (item && item.kind === "file") {
+      // Both must be requested synchronously, before the event ends.
+      file = item.getAsFile();
+      if (item.getAsFileSystemHandle) handleP = item.getAsFileSystemHandle();
+    } else if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      file = e.dataTransfer.files[0];
+    }
+    if (!file) return;
+    let handle = null;
+    if (handleP) {
+      try { const h = await handleP; if (h && h.kind === "file") handle = h; } catch (_) { handle = null; }
+    }
+    loadFile(file, handle);
+  });
+
+  /* ---- editing ----------------------------------------------------------------- */
+  el.checkall.addEventListener("change", () => {
+    const rows = describeEntities(cur.structure).filter((r) => r.id === "Chest");
+    for (const r of rows) { if (el.checkall.checked) checked.add(r.idx); else checked.delete(r.idx); }
+    render();
+  });
+
+  el.table.addEventListener("input", () => {
+    el.tablehelp.innerHTML = HELP_DEFAULT;
+    el.tablehelp.className = "help";
+  });
+
+  el.apply.addEventListener("click", () => {
+    if (!cur) return;
+    const t = el.table.value.trim();
+    if (!t || t.endsWith("/")) {
+      el.tablehelp.textContent = "Type the full loot table path first, for example loot_tables/chests/my_loot.json.";
+      el.tablehelp.className = "help bad";
+      el.table.focus();
+      return;
+    }
+    if (!checked.size) return setStatus("Tick at least one row first.", "bad");
+    const n = applyLoot(cur.structure, checked, t, el.clear.checked);
+    for (const i of checked) dirty.add(i);
+    render();
+    const odd = !(t.startsWith("loot_tables/") && t.endsWith(".json"));
+    setStatus(
+      "Set the loot table on " + n + (n === 1 ? " row." : " rows.") + " Download or save to keep the change." +
+      (odd ? " The path doesn't look like loot_tables/....json, so check it." : "")
+    );
+  });
+
+  /* ---- saving ------------------------------------------------------------------ */
+  async function buildAndVerify() {
+    const expected = new Map(describeEntities(cur.structure).filter((r) => dirty.has(r.idx)).map((r) => [r.idx, r.loot]));
+    const bytes = await buildOutput(cur, el.uncompressed.checked);
+    const check = await parseStructureFile(bytes);
+    const got = new Map(describeEntities(check.structure).map((r) => [r.idx, r.loot]));
+    for (const [i, t] of expected) {
+      if (got.get(i) !== t) throw new Error("Verification failed for index " + i + ". The file was not saved.");
+    }
+    return { bytes, check, count: expected.size };
+  }
+
+  function afterSave(check) {
+    cur = check;
+    dirty = new Set();
+    render();
+  }
+
+  el.download.addEventListener("click", async () => {
+    if (!cur) return;
+    if (!dirty.size) return setStatus("There are no changes to save yet.", "bad");
+    try {
+      const { bytes, check, count } = await buildAndVerify();
+      const blob = new Blob([bytes], { type: "application/octet-stream" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      afterSave(check);
+      setStatus("Downloaded " + fileName + " and verified " + count + (count === 1 ? " change." : " changes."), "ok");
+    } catch (e) {
+      setStatus(String(e && e.message || e), "bad");
+    }
+  });
+
+  el.saveover.addEventListener("click", async () => {
+    if (!cur || !fileHandle) return;
+    if (!dirty.size) return setStatus("There are no changes to save yet.", "bad");
+    if (!window.confirm("This replaces the original file on your computer. Keep a copy of it first if you may want to go back. Continue?")) return;
+    try {
+      const { bytes, check, count } = await buildAndVerify();
+      const w = await fileHandle.createWritable();
+      await w.write(bytes);
+      await w.close();
+      afterSave(check);
+      setStatus("Saved over " + fileName + " and verified " + count + (count === 1 ? " change." : " changes."), "ok");
+    } catch (e) {
+      setStatus(String(e && e.message || e), "bad");
+    }
+  });
+
+  window.addEventListener("beforeunload", (e) => {
+    if (dirty.size) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  // Hook for automated tests; harmless in normal use.
+  window.__loot = { loadFile };
+})();
+</script>
+</body>
+</html>
